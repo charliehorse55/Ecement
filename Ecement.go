@@ -64,6 +64,12 @@ func main() {
 		return
 	}	
 	
+	Width, Height, err := getImageRes(imagePaths[0])
+	if err != nil {
+		log.Printf("Failed to read image: %v\n", err)
+		return
+	}
+	
 	// controller = &keyScroll{}
 	controller = &keyboard{}
 	// controller = &sincos{}
@@ -80,7 +86,22 @@ func main() {
 	glfw.WindowHint(glfw.ContextVersionMajor, 3)
 	glfw.WindowHint(glfw.ContextVersionMinor, 2)
 
-    window, err := glfw.CreateWindow(640, 480, "Testing", nil, nil)
+	monitor, err := glfw.GetPrimaryMonitor()
+	if err != nil {
+		log.Printf("Failed to find primary monitor: %v\n", err)
+		return
+	}
+
+	resolution, err := monitor.GetVideoMode()
+	if err != nil {
+		log.Printf("Failed to discover video mode: %v\n", err)
+		return
+	}
+	
+	resolution.Height = int(0.8 * float64(resolution.Height))
+	resolution.Width = int(float64(Width)/float64(Height) * float64(resolution.Height))
+
+    window, err := glfw.CreateWindow(resolution.Width, resolution.Height, "Testing", nil, nil)
     if err != nil {
 		log.Printf("Ecement requires n files, where 2 <= n <= 10\n")
 		return
@@ -165,7 +186,7 @@ func main() {
 	
 	
 	//load the textures
-	err = loadImages(imagePaths)
+	err = loadImages(imagePaths, Width, Height)
 	if err != nil {
 		log.Printf("Failed to load images into texture: %v", err)
 		return

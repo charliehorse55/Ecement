@@ -9,19 +9,24 @@ import (
     gl "github.com/go-gl/gl"
 )
 
-func loadImages(filenames []string) error {
-	//setup
-	file, err := os.Open(filenames[0])
+func getImageRes(filename string) (int, int, error) {
+	file, err := os.Open(filename)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
+	defer file.Close()
+	
 	config, _, err := image.DecodeConfig(file)
 	if err != nil {
-		file.Close()
-		return err
+		return 0, 0, err
 	}
-	file.Close()
-	finalBounds := image.Rectangle{Max: image.Point{X:config.Width*len(filenames), Y:config.Height}}
+	
+	return config.Width, config.Height, nil
+}
+
+func loadImages(filenames []string, Width, Height int) error {
+	//setup
+	finalBounds := image.Rectangle{Max: image.Point{X:Width*len(filenames), Y:Height}}
 	output := image.NewRGBA(finalBounds)
 	
 	for i, filename := range filenames {
@@ -29,7 +34,7 @@ func loadImages(filenames []string) error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
+		defer r.Close()
 		
 		img, _, err := image.Decode(r)
 		if err != nil {
@@ -39,7 +44,7 @@ func loadImages(filenames []string) error {
 		bounds := img.Bounds()
 		width := bounds.Max.X
 		height := bounds.Max.Y
-		if width != config.Width || height != config.Height {
+		if width != Width || height != Height {
 			return fmt.Errorf("Image %s has different size", filename)
 		}
 		for j := 0; j < height; j++ {
