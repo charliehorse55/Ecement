@@ -4,17 +4,21 @@ in vec2 texCoord;
 
 out vec4 outColor;
 
-uniform sampler2D tex0;
-uniform sampler2D tex1;
+uniform sampler2D tex;
+uniform int num;
 
-uniform vec2 intensity;
+uniform float[10] intensity;
 
 void main() {
-	vec4 p0 = texture(tex0, texCoord);
-	vec4 p1 = texture(tex1, texCoord);
-    outColor.r = sqrt((p0.r*p0.r)*intensity.x + (p1.r*p1.r)*intensity.y);
-    outColor.g = sqrt((p0.g*p0.g)*intensity.x + (p1.g*p1.g)*intensity.y);
-    outColor.b = sqrt((p0.b*p0.b)*intensity.x + (p1.b*p1.b)*intensity.y);
-	outColor.a = 1.0;
+	outColor = vec4(0.0, 0.0, 0.0, 1.0);
+	for(int i = 0; i < num; i++) {
+		vec4 p = texture(tex, vec2((texCoord.x/num) + (float(i)/float(num)), texCoord.y));
+		outColor.r += (p.r*p.r)*intensity[i];
+		outColor.g += (p.g*p.g)*intensity[i];
+		outColor.b += (p.b*p.b)*intensity[i];
+	}
+	outColor.r = sqrt(outColor.r);
+	outColor.g = sqrt(outColor.g);
+	outColor.b = sqrt(outColor.b);
 }
 
