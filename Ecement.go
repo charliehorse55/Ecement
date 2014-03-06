@@ -11,7 +11,9 @@ import (
     gl "github.com/go-gl/gl"
 )
 
-var currIntensity []float32
+type Pixel struct {
+	R, G, B, A float32
+}
 
 type intensityController interface {
 	Begin(w *glfw.Window, num int) error
@@ -19,6 +21,7 @@ type intensityController interface {
 }
 
 var controller intensityController
+var currIntensity []float32
 
 
 // OpenGL and glfw need to be called from the main thread
@@ -29,8 +32,7 @@ func init() {
 func checkGLError() {
 	glErr := gl.GetError()
 	if glErr != 0 {
-		fmt.Printf("Code: %d\n", glErr)
-		panic("gl error")
+		log.Fatal("GL Error Code: %d\n", glErr)
 	}
 }
 
@@ -51,7 +53,7 @@ func loadShader(filename string, kind gl.GLenum) (gl.Shader, error)  {
 }
 
 func errorCallback(err glfw.ErrorCode, desc string) {
-    fmt.Printf("%v: %v\n", err, desc)
+    log.Fatal("%v: %v\n", err, desc)
 }
 
 func main() {
@@ -60,22 +62,19 @@ func main() {
 	imagePaths := flag.Args()
 	
 	if len(imagePaths) < 2 || len(imagePaths) > 10 {
-		log.Printf("Ecement requires n files, where 2 <= n <= 10\n")
-		return
+		log.Fatal("Ecement requires n files, where 2 <= n <= 10\n")
 	}	
 	
-	Width, Height, err := getImageRes(imagePaths[0])
+	width, height, err := getImageRes(imagePaths[0])
 	if err != nil {
-		log.Printf("Failed to read image: %v\n", err)
-		return
+		log.Fatal("Failed to read image: %v\n", err)
 	}
 	
-	// controller = &keyScroll{}
-	controller = &keyboard{}
+	controller = &keyScroll{}
+	// controller = &keyboard{}
 	// controller = &sincos{}
 	
 	glfw.SetErrorCallback(errorCallback)
-
     if !glfw.Init() {
         return
     }
@@ -86,44 +85,36 @@ func main() {
 	glfw.WindowHint(glfw.ContextVersionMajor, 3)
 	glfw.WindowHint(glfw.ContextVersionMinor, 2)
 
-	monitor, err := glfw.GetPrimaryMonitor()
+	_, monitorHeight, err := monitorResolution()
 	if err != nil {
-		log.Printf("Failed to find primary monitor: %v\n", err)
-		return
-	}
-
-	resolution, err := monitor.GetVideoMode()
-	if err != nil {
-		log.Printf("Failed to discover video mode: %v\n", err)
-		return
+		log.Fatal("Failed to discover monitor resolution: %v", err)
 	}
 	
-	resolution.Height = int(0.8 * float64(resolution.Height))
-	resolution.Width = int(float64(Width)/float64(Height) * float64(resolution.Height))
+	windowHeight := int(0.8 * float64(monitorHeight))
+	windowWidth := int(float64(width)/float64(height) * float64(windowHeight))
 
-    window, err := glfw.CreateWindow(resolution.Width, resolution.Height, "Testing", nil, nil)
-    if err != nil {
-		log.Printf("Ecement requires n files, where 2 <= n <= 10\n")
-		return
-    }
+	window, err := openWindow("Ecement", windowWidth, windowHeight)
+	if err != nil {
+		log.Fatal("Failed to open window: %v", err)
+	}
 
-    window.MakeContextCurrent()
-	
+	result := gl.Init()
+	if result != 0 {
+		log.Fatal("Failed to initialize GLEW: %d", result)
+	}
+	gl.GetError()
+
+
 	err = controller.Begin(window, len(imagePaths))
 	if err != nil {
-		log.Printf("Failed to initialze controller: %v", err)
-		return
+		log.Fatal("Failed to initialze controller: %v", err)
 	}
 			
-	gl.Init()
-	gl.GetError()
 	
-    //enable vertical sync (must be after MakeCurrentContext)
-    glfw.SwapInterval(1)
-
 	VAO := gl.GenVertexArray()
 	VAO.Bind()
 
+	//just drawing a rectangle
 	vertices := []float32{
 		0.0, 1.0,	  // Top-left
 		1.0, 1.0,     // Top-right
@@ -184,21 +175,52 @@ func main() {
 	intensitylocation.Uniform1fv(len(currIntensity), currIntensity)
 	checkGLError()	
 	
-	
+		
 	//load the textures
-	err = loadImages(imagePaths, Width, Height)
+	err = loadImages(imagePaths, width, height)
 	if err != nil {
 		log.Printf("Failed to load images into texture: %v", err)
 		return
 	}
 	checkGLError()	
 
+	//create a framebuffer to render into as an intermediary
+	fbo := gl.GenFramebuffer()
+	fbo.Bind()
+	
+	screen := gl.Framebuffer(0)
+	
+	// The texture we're going to render to
+	 
+	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
+	 
+	renderedTexture := gl.GenTexture()
+	
+	// "Bind" the newly created texture : all future texture functions will modify this texture
+	renderedTexture.Bind(gl.TEXTURE_2D)
+	
+	// Give an empty image to OpenGL ( the last "0" )
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
+	
+	// Poor filtering. Needed !
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+
+ 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, renderedTexture, 0)
+	gl.DrawBuffer(gl.COLOR_ATTACHMENT0)
+		
 	lastUpdated := time.Now()
 	frames := 0
+	shouldSave := false
+	rawOutput := make([]Pixel, width*height)
     for !window.ShouldClose() {
 		frames++
 				
 		//set the intensities
+		// currIntensity[0] = 1.0
+		// currIntensity[1] = 1.0
+		// currIntensity[2] = 1.0
+		
 		err = controller.Update(currIntensity)
 		if err != nil {
 			log.Printf("Failed to update controller state: %v", err)
@@ -207,32 +229,34 @@ func main() {
 		
 		intensitylocation.Uniform1fv(len(currIntensity), currIntensity)
 		
+		//render to the screen
+		screen.Bind()
+		gl.Viewport(0,0, windowWidth, windowHeight)
 		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
-		checkGLError()
 		
-		
-        glfw.PollEvents()
+		//save the output if the user wanted to
+		if shouldSave {
+			fbo.Bind()
+			gl.Viewport(0,0, width, height)
+			gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+			gl.GetTexImage(gl.TEXTURE_2D, 0, gl.RGBA, gl.FLOAT, rawOutput)
+			go saveToJPEG("output.jpg", width, height, rawOutput)
+			shouldSave = false
+		}
+				
+		glfw.PollEvents()
 		now := time.Now()
 		diff := now.Sub(lastUpdated)
 		if diff > time.Second*10 {
 			fmt.Printf("%.1f FPS\n", float64(frames)/diff.Seconds())
 			lastUpdated = now
 			frames = 0
+			shouldSave = true
 		}
 		
-        window.SwapBuffers()
+		window.SwapBuffers()
     }
-					
-	// outfilepath := "output.jpg"
-	// outfile, err := os.Create(outfilepath)
-	// if err != nil {
-	// 	log.Printf("Failed to open output file: %s", outfilepath)
-	// 	return 
-	// }
-	// defer outfile.Close()
-	// 
-	// err = jpeg.Encode(outfile, output, nil)
-	// if err != nil {
-	// 	log.Printf("Failed to encode output file")
-	// }
+	
+	//print the height/width of the target texture
+	
 }

@@ -4,8 +4,9 @@ import (
 	"image"
 	"os"
 	"fmt"
+	"image/color"
 	_ "image/png"
-	_ "image/jpeg"
+	"image/jpeg"
     gl "github.com/go-gl/gl"
 )
 
@@ -60,4 +61,46 @@ func loadImages(filenames []string, Width, Height int) error {
     gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, finalBounds.Max.X, finalBounds.Max.Y, 0, gl.RGBA, gl.UNSIGNED_BYTE, output.Pix)
 	
 	return nil
-}		
+}	
+
+func saveToJPEG(filename string, width, height int, data []Pixel) error {
+	output := image.NewNRGBA(image.Rectangle{Max: image.Point{X:width, Y:height}})
+	for i := 0; i < height; i++ {
+		for j := 0; j < width; j++ {
+			
+			//prevent overflow for each channel when packed into 8 bits
+			red := data[i*width +j].R*255
+			if red > 255 {
+				red = 255
+			}
+			green := data[i*width +j].G*255
+			if green > 255 {
+				green = 255
+			}
+			blue := data[i*width +j].B*255
+			if blue > 255 {
+				blue = 255
+			}
+	
+			output.Set(j, height - (i+1), color.NRGBA{
+					R:uint8(red),
+					G:uint8(green),
+					B:uint8(blue),
+					A:uint8(255),
+				})
+		}
+	}
+		
+	outfile, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("Failed to open output file: %s", filename)
+	}
+	defer outfile.Close()
+
+	err = jpeg.Encode(outfile, output, nil)
+	if err != nil {
+		return fmt.Errorf("Failed to encode output file: %v", err)
+	}
+	
+	return nil
+}
