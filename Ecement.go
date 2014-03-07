@@ -32,7 +32,8 @@ func init() {
 func checkGLError() {
 	glErr := gl.GetError()
 	if glErr != 0 {
-		log.Fatal("GL Error Code: %d\n", glErr)
+		log.Printf("GL Error Code: %d\n", int(glErr))
+		panic("stack trace")
 	}
 }
 
@@ -53,7 +54,7 @@ func loadShader(filename string, kind gl.GLenum) (gl.Shader, error)  {
 }
 
 func errorCallback(err glfw.ErrorCode, desc string) {
-    log.Fatal("%v: %v\n", err, desc)
+    log.Fatalf("%v: %v\n", err, desc)
 }
 
 func main() {
@@ -61,13 +62,13 @@ func main() {
 	
 	imagePaths := flag.Args()
 	
-	if len(imagePaths) < 2 || len(imagePaths) > 10 {
-		log.Fatal("Ecement requires n files, where 2 <= n <= 10\n")
-	}	
+	// if len(imagePaths) < 2 || len(imagePaths) > 10 {
+	// 	log.Fatalf("Ecement requires n files, where 2 <= n <= 10\n")
+	// }	
 	
 	width, height, err := getImageRes(imagePaths[0])
 	if err != nil {
-		log.Fatal("Failed to read image: %v\n", err)
+		log.Fatalf("Failed to read image: %v\n", err)
 	}
 	
 	controller = &keyScroll{}
@@ -87,7 +88,7 @@ func main() {
 
 	_, monitorHeight, err := monitorResolution()
 	if err != nil {
-		log.Fatal("Failed to discover monitor resolution: %v", err)
+		log.Fatalf("Failed to discover monitor resolution: %v", err)
 	}
 	
 	windowHeight := int(0.8 * float64(monitorHeight))
@@ -95,22 +96,21 @@ func main() {
 
 	window, err := openWindow("Ecement", windowWidth, windowHeight)
 	if err != nil {
-		log.Fatal("Failed to open window: %v", err)
+		log.Fatalf("Failed to open window: %v", err)
 	}
 
 	result := gl.Init()
 	if result != 0 {
-		log.Fatal("Failed to initialize GLEW: %d", result)
+		log.Fatalf("Failed to initialize GLEW: %d", result)
 	}
 	gl.GetError()
 
 
 	err = controller.Begin(window, len(imagePaths))
 	if err != nil {
-		log.Fatal("Failed to initialze controller: %v", err)
+		log.Fatalf("Failed to initialze controller: %v", err)
 	}
 			
-	
 	VAO := gl.GenVertexArray()
 	VAO.Bind()
 
@@ -143,120 +143,136 @@ func main() {
 	}
 	fragmentShader, err := loadShader("fragment.glsl", gl.FRAGMENT_SHADER)
 	if err != nil {
-		log.Printf("Failed to load fragment shader: %v", err)
+		log.Printf("Failed to load fragment step shader: %v", err)
 		return
 	}
 	
-	shaderProgram := gl.CreateProgram()
-	shaderProgram.AttachShader(vertexShader)
-	shaderProgram.AttachShader(fragmentShader)
-	checkGLError()
+	finishShader, err := loadShader("finish.glsl", gl.FRAGMENT_SHADER)
+	if err != nil {
+		log.Printf("Failed to load fragment finishing shader: %v", err)
+		return
+	}
 	
-	shaderProgram.Link()
-	checkGLError()
-	shaderProgram.Use()
-	checkGLError()
 	
-	posLocation := shaderProgram.GetAttribLocation("position")
+	//create a program to iteratively cement each image
+	stepProgram := gl.CreateProgram()
+	stepProgram.AttachShader(vertexShader)
+	stepProgram.AttachShader(fragmentShader)
+	checkGLError()
+		
+	stepProgram.Link()
+	checkGLError()
+	stepProgram.Use()
+	
+	//create a program to apply the final tonemap to generate a viewable image
+	finishProgram := gl.CreateProgram()
+	finishProgram.AttachShader(vertexShader)
+	finishProgram.AttachShader(finishShader)
+	checkGLError()
+		
+	finishProgram.Link()
+	checkGLError()
+		
+	posLocation := stepProgram.GetAttribLocation("position")
 	posLocation.AttribPointer(2, gl.FLOAT, false, 0, nil)
 	posLocation.EnableArray()
 	checkGLError()	
 	
-	tex0location := shaderProgram.GetUniformLocation("tex0")
-	tex0location.Uniform1i(0)
-	
-	numlocation := shaderProgram.GetUniformLocation("num")
-	numlocation.Uniform1i(len(imagePaths))
-	checkGLError()	
-
-	currIntensity = make([]float32, len(imagePaths))
-	
-	intensitylocation := shaderProgram.GetUniformLocation("intensity")
-	intensitylocation.Uniform1fv(len(currIntensity), currIntensity)
+	oldlocation := stepProgram.GetUniformLocation("old")
+	oldlocation.Uniform1i(0)
 	checkGLError()	
 	
+	newlocation := stepProgram.GetUniformLocation("new")
+	newlocation.Uniform1i(1)
+	checkGLError()	
 		
+	intensitylocation := stepProgram.GetUniformLocation("intensity")
+	checkGLError()	
+			
 	//load the textures
-	err = loadImages(imagePaths, width, height)
+	vectors, err := loadImages(imagePaths, width, height)
 	if err != nil {
-		log.Printf("Failed to load images into texture: %v", err)
-		return
+		log.Fatalf("Failed to load images into texture: %v", err)
 	}
 	checkGLError()	
 
-	//create a framebuffer to render into as an intermediary
-	fbo := gl.GenFramebuffer()
-	fbo.Bind()
+	//create framebuffers to render final outputs	
+	fullSizeFBs := createFramebufferPair(width, height)
 	
-	screen := gl.Framebuffer(0)
-	
-	// The texture we're going to render to
-	 
-	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
-	 
-	renderedTexture := gl.GenTexture()
-	
-	// "Bind" the newly created texture : all future texture functions will modify this texture
-	renderedTexture.Bind(gl.TEXTURE_2D)
-	
-	// Give an empty image to OpenGL ( the last "0" )
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
-	
-	// Poor filtering. Needed !
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-
- 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, renderedTexture, 0)
-	gl.DrawBuffer(gl.COLOR_ATTACHMENT0)
+	//create framebuffers to render in real time for the current window
+	windowFBs := createFramebufferPair(windowWidth, windowHeight)
 		
+	checkGLError()
+	
+	screenFB := gl.Framebuffer(0)
+	_ = screenFB
+				
 	lastUpdated := time.Now()
 	frames := 0
-	shouldSave := false
+	shouldSave := true
 	rawOutput := make([]Pixel, width*height)
+	done := make(chan int, 100)
+	saveOperations := 0
     for !window.ShouldClose() {
 		frames++
-				
-		//set the intensities
-		// currIntensity[0] = 1.0
-		// currIntensity[1] = 1.0
-		// currIntensity[2] = 1.0
-		
+					
 		err = controller.Update(currIntensity)
 		if err != nil {
 			log.Printf("Failed to update controller state: %v", err)
 			return
 		}
 		
-		intensitylocation.Uniform1fv(len(currIntensity), currIntensity)
-		
 		//render to the screen
-		screen.Bind()
+		stepProgram.Use()
 		gl.Viewport(0,0, windowWidth, windowHeight)
-		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+		render(vectors, windowFBs, intensitylocation)
 		
+		// screenFB.Bind()
+		// finishProgram.Use()
+		// gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+		
+		checkGLError()		
+	
 		//save the output if the user wanted to
 		if shouldSave {
-			fbo.Bind()
+			// windowFB.Bind()
+			// checkGLError()	
+			stepProgram.Use()
 			gl.Viewport(0,0, width, height)
+			render(vectors, fullSizeFBs, intensitylocation)
+			
+			finishProgram.Use()
 			gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
-			gl.GetTexImage(gl.TEXTURE_2D, 0, gl.RGBA, gl.FLOAT, rawOutput)
-			go saveToJPEG("output.jpg", width, height, rawOutput)
-			shouldSave = false
+			
+			gl.ReadPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, rawOutput)
+		
+			go func() {
+				path := "output.jpg"
+				err := saveToJPEG(path, width, height, rawOutput)
+				if err != nil {
+					log.Printf("Failed to save jpeg: %v", err)
+				}
+				done <- 1
+			}()
+			saveOperations++
+			shouldSave = false	
+			break
 		}
 				
 		glfw.PollEvents()
 		now := time.Now()
 		diff := now.Sub(lastUpdated)
-		if diff > time.Second*10 {
+		if diff > time.Second*2 {
 			fmt.Printf("%.1f FPS\n", float64(frames)/diff.Seconds())
 			lastUpdated = now
 			frames = 0
-			shouldSave = true
 		}
 		
 		window.SwapBuffers()
     }
 	
-	//print the height/width of the target texture
-	
+	//wait for any remaining saves to complete
+	for i := 0; i < saveOperations; i++ {
+		<-done
+	}	
 }

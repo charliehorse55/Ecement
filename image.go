@@ -25,45 +25,47 @@ func getImageRes(filename string) (int, int, error) {
 	return config.Width, config.Height, nil
 }
 
-func loadImages(filenames []string, Width, Height int) error {
-	//setup
-	finalBounds := image.Rectangle{Max: image.Point{X:Width*len(filenames), Y:Height}}
-	output := image.NewRGBA(finalBounds)
-	
+func loadImages(filenames []string, width, height int) (vectors []lightvector, err error) {
+
+	pixelBuf := image.NewNRGBA(image.Rectangle{Max: image.Point{X:width, Y:height}})
+	vectors = make([]lightvector, len(filenames))
 	for i, filename := range filenames {
 		r, err := os.Open(filename)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer r.Close()
 		
 		img, _, err := image.Decode(r)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		
 		bounds := img.Bounds()
-		width := bounds.Max.X
-		height := bounds.Max.Y
-		if width != Width || height != Height {
-			return fmt.Errorf("Image %s has different size", filename)
+		if bounds.Max.X != width || bounds.Max.Y != height {
+			return nil, fmt.Errorf("Image %s has different size", filename)
 		}
+		
 		for j := 0; j < height; j++ {
 			for k := 0; k < width; k++ {
-				output.Set(k + width*i, height - (j + 1), img.At(k,j))	
+				pixelBuf.Set(k, height - (j + 1), img.At(k,j))	
 			}
 		}
+		vectors[i].R = 1.0
+		vectors[i].G = 1.0
+		vectors[i].B = 1.0
+		
+		vectors[i].image = gl.GenTexture()
+		vectors[i].image.Bind(gl.TEXTURE_2D)
+	    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf.Pix)
 	} 
 		
-	texture := gl.GenTexture()
-	texture.Bind(gl.TEXTURE_2D)
-    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, finalBounds.Max.X, finalBounds.Max.Y, 0, gl.RGBA, gl.UNSIGNED_BYTE, output.Pix)
 	
-	return nil
+	return  vectors, nil
 }	
 
-func saveToJPEG(filename string, width, height int, data []Pixel) error {
+func saveToJPEG(filename string, width, height int, data []Pixel) error {	
 	output := image.NewNRGBA(image.Rectangle{Max: image.Point{X:width, Y:height}})
 	for i := 0; i < height; i++ {
 		for j := 0; j < width; j++ {

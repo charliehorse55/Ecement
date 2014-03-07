@@ -2,23 +2,19 @@
 
 in vec2 texCoord;
 
-out vec4 outColor;
+layout(location = 0) out vec4 outColor;
 
-uniform sampler2D tex;
-uniform int num;
+uniform sampler2D old;
+uniform sampler2D new;
 
-uniform float[10] intensity;
+uniform vec3 intensity;
 
 void main() {
-	outColor = vec4(0.0, 0.0, 0.0, 1.0);
-	for(int i = 0; i < num; i++) {
-		vec4 p = texture(tex, vec2((texCoord.x/num) + (float(i)/float(num)), texCoord.y));
-		outColor.r += (p.r*p.r)*intensity[i];
-		outColor.g += (p.g*p.g)*intensity[i];
-		outColor.b += (p.b*p.b)*intensity[i];
-	}
-	outColor.r = sqrt(outColor.r);
-	outColor.g = sqrt(outColor.g);
-	outColor.b = sqrt(outColor.b);
+	vec4 p = texture(new, texCoord);
+	vec4 q = texture(old, texCoord);
+	outColor.r = (p.r*p.r)*intensity.r + q.r;
+	outColor.g = (p.g*p.g)*intensity.g + q.g;
+	outColor.b = (p.b*p.b)*intensity.b + q.b;
+	outColor.a = 1.0;
 }
 
