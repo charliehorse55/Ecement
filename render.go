@@ -24,11 +24,6 @@ func createFramebufferPair(width, height int) []OffscreenRender {
 	return result
 }
 
-type lightvector struct {
-	image gl.Texture
-	R, G, B, A float32
-}
-
 func render(vectors []lightvector, framebuffers []OffscreenRender, intensity gl.UniformLocation) {
 	
 	//clear the starting buffer

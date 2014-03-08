@@ -25,6 +25,13 @@ func getImageRes(filename string) (int, int, error) {
 	return config.Width, config.Height, nil
 }
 
+
+type lightvector struct {
+	image gl.Texture
+	R, G, B, A float32
+	filename string
+}
+
 func loadImages(filenames []string, width, height int) (vectors []lightvector, err error) {
 
 	pixelBuf := image.NewNRGBA(image.Rectangle{Max: image.Point{X:width, Y:height}})
@@ -54,13 +61,13 @@ func loadImages(filenames []string, width, height int) (vectors []lightvector, e
 		vectors[i].R = 1.0
 		vectors[i].G = 1.0
 		vectors[i].B = 1.0
+		vectors[i].filename = filename
 		
 		vectors[i].image = gl.GenTexture()
 		vectors[i].image.Bind(gl.TEXTURE_2D)
 	    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
 	    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf.Pix)
 	} 
-		
 	
 	return  vectors, nil
 }	

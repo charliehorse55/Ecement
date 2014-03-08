@@ -62,9 +62,9 @@ func main() {
 	
 	imagePaths := flag.Args()
 	
-	// if len(imagePaths) < 2 || len(imagePaths) > 10 {
-	// 	log.Fatalf("Ecement requires n files, where 2 <= n <= 10\n")
-	// }	
+	if len(imagePaths) < 2 || len(imagePaths) > 10 {
+		log.Fatalf("Ecement requires n files, where 2 <= n <= 10\n")
+	}	
 	
 	width, height, err := getImageRes(imagePaths[0])
 	if err != nil {
@@ -85,6 +85,8 @@ func main() {
 	glfw.WindowHint(glfw.OpenglProfile, glfw.OpenglCoreProfile)
 	glfw.WindowHint(glfw.ContextVersionMajor, 3)
 	glfw.WindowHint(glfw.ContextVersionMinor, 2)
+	
+	glfw.WindowHint(glfw.Resizable, glfw.False)
 
 	_, monitorHeight, err := monitorResolution()
 	if err != nil {
@@ -205,11 +207,10 @@ func main() {
 	checkGLError()
 	
 	screenFB := gl.Framebuffer(0)
-	_ = screenFB
 				
 	lastUpdated := time.Now()
 	frames := 0
-	shouldSave := true
+	shouldSave := false
 	rawOutput := make([]Pixel, width*height)
 	done := make(chan int, 100)
 	saveOperations := 0
@@ -227,9 +228,9 @@ func main() {
 		gl.Viewport(0,0, windowWidth, windowHeight)
 		render(vectors, windowFBs, intensitylocation)
 		
-		// screenFB.Bind()
-		// finishProgram.Use()
-		// gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+		screenFB.Bind()
+		finishProgram.Use()
+		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
 		
 		checkGLError()		
 	
@@ -256,7 +257,6 @@ func main() {
 			}()
 			saveOperations++
 			shouldSave = false	
-			break
 		}
 				
 		glfw.PollEvents()
