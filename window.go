@@ -29,6 +29,7 @@ func openWindow(title string, width, height int) (*glfw.Window, error) {
 		return nil, err
     }
 
+	//create an OpenGL context
     window.MakeContextCurrent()
     
 	//enable vertical sync (must be after MakeCurrentContext)

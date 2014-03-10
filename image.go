@@ -27,46 +27,110 @@ func getImageRes(filename string) (int, int, error) {
 
 
 type lightvector struct {
-	image gl.Texture
+	texture gl.Texture
 	R, G, B, A float32
 	filename string
 }
 
+func loadImage(filename string, n *image.NRGBA) error {
+	r, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	
+	img, _, err := image.Decode(r)
+	if err != nil {
+		return err
+	}
+	
+	expectSize := n.Bounds().Max
+	imageSize := img.Bounds().Max
+	if imageSize.X != expectSize.X || imageSize.Y != expectSize.Y {
+		return fmt.Errorf("Image %s has different size", filename)
+	}
+	
+	for j := 0; j < imageSize.Y; j++ {
+		for k := 0; k < imageSize.X; k++ {
+			n.Set(k, imageSize.Y - (j + 1), img.At(k,j))	
+		}
+	}
+	return nil
+}
+
 func loadImages(filenames []string, width, height int) (vectors []lightvector, err error) {
 
+	//create a temporary texture to load images into
+	tmpTexture := gl.GenTexture()
+	defer tmpTexture.Delete()
+	tmpTexture.Bind(gl.TEXTURE_2D)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	
+	//create a 1x1 black texture to preprocess the base image with
+	//this way we won't subtract anything from the base image
+	smallBlackTex := gl.GenTexture()
+	defer smallBlackTex.Delete()
+	
+	
+	//image to subtract from is in texture unit 1
+	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
+	smallBlackTex.Bind(gl.TEXTURE_2D)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	
+	pixel := []uint8{0, 0, 0, 255}
+    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+	
+	//create a framebuffer to preprocess the images into
+	fb := gl.GenFramebuffer()
+	fb.Bind()
+	defer fb.Delete()
+		
 	pixelBuf := image.NewNRGBA(image.Rectangle{Max: image.Point{X:width, Y:height}})
 	vectors = make([]lightvector, len(filenames))
 	for i, filename := range filenames {
-		r, err := os.Open(filename)
+		err := loadImage(filename, pixelBuf)
 		if err != nil {
 			return nil, err
-		}
-		defer r.Close()
-		
-		img, _, err := image.Decode(r)
-		if err != nil {
-			return nil, err
-		}
-		
-		bounds := img.Bounds()
-		if bounds.Max.X != width || bounds.Max.Y != height {
-			return nil, fmt.Errorf("Image %s has different size", filename)
-		}
-		
-		for j := 0; j < height; j++ {
-			for k := 0; k < width; k++ {
-				pixelBuf.Set(k, height - (j + 1), img.At(k,j))	
-			}
 		}
 		vectors[i].R = 1.0
 		vectors[i].G = 1.0
 		vectors[i].B = 1.0
 		vectors[i].filename = filename
 		
-		vectors[i].image = gl.GenTexture()
-		vectors[i].image.Bind(gl.TEXTURE_2D)
-	    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+		//after we load in the base image, we need to change the image to subract to be it
+		//instead of the 1x1 black texture we used to load in the base image
+		if i == 1 {
+			gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
+			vectors[0].texture.Bind(gl.TEXTURE_2D)
+		}
+		
+		//create the actual texture for image (where the preprocessed result goes)
+		//don't overwrite the texture in tex unit 1
+		gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(2))
+		vectors[i].texture = gl.GenTexture()
+		vectors[i].texture.Bind(gl.TEXTURE_2D)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
+		
+		//bind it as the framebuffer target
+	 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, vectors[i].texture, 0)	
+		
+		//upload the image into the temporary GPU texture
+		gl.ActiveTexture(gl.TEXTURE0)
+		tmpTexture.Bind(gl.TEXTURE_2D)
 	    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf.Pix)
+				
+		//preprocess the image
+		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)		
 	} 
 	
 	return  vectors, nil
