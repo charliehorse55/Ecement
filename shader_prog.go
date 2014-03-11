@@ -1,4 +1,4 @@
-package main
+package Ecement
 
 import (
 	"io/ioutil"

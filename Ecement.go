@@ -1,32 +1,133 @@
-package main
+package Ecement
 
 import (
-	"flag"
 	"fmt"
 	"log"
-	"runtime"
-	"time"
-    glfw "github.com/go-gl/glfw3"
     gl "github.com/go-gl/gl"
 )
 
-type Pixel struct {
-	R, G, B, A float32
+type RGB32f struct {
+	R, G, B float32
 }
 
-type intensityController interface {
-	Begin(w *glfw.Window, num int) error
-	Update(intensity []float32) error
+type Lightvector struct {
+	Texture gl.Texture
+	Intensity RGB32f
+	Filename string
 }
 
-var controller intensityController
-var currIntensity []float32
+type Painting []Lightvector
 
+type Rendering struct {
+	Painting Painting
+	curr []RGB32f
+	Texture gl.Texture
+	BackBuffer gl.Texture
+	Width, Height int
+}
 
-// OpenGL and glfw need to be called from the main thread
-func init() {
-    runtime.LockOSThread()
-	loadedShaders = make(map[string]gl.Shader)
+func (p Painting)Load(removeBackground bool) error {
+	FB.Bind()
+	vao.Bind()
+	preprocess.Use()
+	if len(p) == 0 {
+		return fmt.Errorf("Empty painting")
+	}
+	
+	width, height, err := getImageRes(p[0].Filename)
+	if err != nil {
+		return err
+	}
+	gl.Viewport(0,0, width, height)
+	
+	
+	return loadImages(p, width, height, removeBackground)
+}
+
+func (p Painting)CreateRendering(width, height int) *Rendering {
+	var result Rendering
+	result.Painting = p
+	result.curr = make([]RGB32f, len(p))
+	result.Width = width
+	result.Height = height
+	
+	tex := []*gl.Texture{&result.Texture, &result.BackBuffer}
+	for i := range tex {
+		*(tex[i]) = gl.GenTexture()
+		(*(tex[i])).Bind(gl.TEXTURE_2D)
+		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	}
+	
+	//clear the current texture to black
+	FB.Bind()
+	vao.Bind()
+	gl.Viewport(0,0, width, height)
+ 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, result.Texture, 0)	
+	gl.ClearColor(0.0, 0.0, 0.0, 1.0)
+    gl.Clear(gl.COLOR_BUFFER_BIT)
+	
+	//this will render everything, as result.curr has been init to 0
+	//thus the current state is that the texture contains only black
+	result.Update()
+	return &result
+}
+
+func (r *Rendering)Update() {
+	FB.Bind()
+	step.Use()
+	vao.Bind()
+	gl.Viewport(0,0, r.Width, r.Height)
+	
+	//update the rendering by adding only the changes of each channel
+	//this speeds things up a lot, as usually only a few channels are 
+	//changed per frame
+	for i := range r.Painting {
+		//does not need to be updated
+		if r.Painting[i].Intensity == r.curr[i] {
+			continue
+		}
+		
+		diff := RGB32f {
+			R:r.Painting[i].Intensity.R - r.curr[i].R,
+			G:r.Painting[i].Intensity.G - r.curr[i].G,
+			B:r.Painting[i].Intensity.B - r.curr[i].B,
+		} 
+		r.curr[i] = r.Painting[i].Intensity
+				
+		//update the uniform to use the new intensities
+		intensitylocation.Uniform3f(diff.R, diff.G, diff.B)
+	
+		//bind the current result framebuffer to texture 0
+		gl.ActiveTexture(gl.TEXTURE0)
+		r.Texture.Bind(gl.TEXTURE_2D)
+	
+		//bind the input image to texture 1
+		gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
+		r.Painting[i].Texture.Bind(gl.TEXTURE_2D)
+	
+		//draw to the output buffer
+	 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.BackBuffer, 0)
+		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+		
+		//swap the buffers
+		tmp := r.BackBuffer
+		r.BackBuffer = r.Texture
+		r.Texture = tmp
+	}
+}
+
+//NOTE that this function specifically does NOT bind to a framebuffer
+// or set a viewport
+//this lets you bind to the screen before calling this if you want
+//otherwise, just bind to Ecement.FB
+func (r *Rendering)Tonemap() {
+	vao.Bind()
+	final.Use()
+	gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)	
 }
 
 func checkGLError() {
@@ -37,75 +138,29 @@ func checkGLError() {
 	}
 }
 
-func errorCallback(err glfw.ErrorCode, desc string) {
-    log.Fatalf("%v: %v\n", err, desc)
-}
 
-func main() {
-	flag.Parse()
-	
-	imagePaths := flag.Args()
-	
-	currIntensity = make([]float32, len(imagePaths))
-	
-	// if len(imagePaths) < 2 || len(imagePaths) > 10 {
-	// 	log.Fatalf("Ecement requires n files, where 2 <= n <= 10\n")
-	// }	
-	
-	width, height, err := getImageRes(imagePaths[0])
-	if err != nil {
-		log.Fatalf("Failed to read image: %v\n", err)
-	}
-	
-	controller = &keyScroll{}
-	// controller = &keyboard{}
-	// controller = &sincos{}
-	
-	glfw.SetErrorCallback(errorCallback)
-    if !glfw.Init() {
-        return
-    }
-    defer glfw.Terminate()
+var FB gl.Framebuffer
 
-	// Get the right version of OpenGL
-	glfw.WindowHint(glfw.OpenglForwardCompatible, glfw.True)
-	glfw.WindowHint(glfw.OpenglProfile, glfw.OpenglCoreProfile)
-	glfw.WindowHint(glfw.ContextVersionMajor, 3)
-	glfw.WindowHint(glfw.ContextVersionMinor, 2)
+//bind to this before we draw
+var vao gl.VertexArray
+
+//shaders
+var preprocess gl.Program
+var step gl.Program
+var final gl.Program
+
+var intensitylocation gl.UniformLocation
+
+func Start() {
 	
-	//we don't handle this properly yet
-	glfw.WindowHint(glfw.Resizable, glfw.False)
-
-	_, monitorHeight, err := monitorResolution()
-	if err != nil {
-		log.Fatalf("Failed to discover monitor resolution: %v", err)
-	}
+	FB = gl.GenFramebuffer()
+	FB.Bind()
 	
-	//create a window that is 80% of the monitors height,
-	//with a width based on the aspect ratio of the input images
-	windowHeight := int(0.8 * float64(monitorHeight))
-	windowWidth := int(float64(width)/float64(height) * float64(windowHeight))
-
-	window, err := openWindow("Ecement", windowWidth, windowHeight)
-	if err != nil {
-		log.Fatalf("Failed to open window: %v", err)
-	}
-
-	result := gl.Init()
-	if result != 0 {
-		log.Fatalf("Failed to initialize GLEW: %d", result)
-	}
-	//clear a spurious error sometimes generated by GLEW's initialization 
-	gl.GetError()
-
-	err = controller.Begin(window, len(imagePaths))
-	if err != nil {
-		log.Fatalf("Failed to initialze controller: %v", err)
-	}
-	
+	loadedShaders = make(map[string]gl.Shader)
+		
 	//just drawing a rectangle
-	VAO := gl.GenVertexArray()
-	VAO.Bind()
+	vao = gl.GenVertexArray()
+	vao.Bind()
 	vertices := []float32{
 		0.0, 1.0,	  // Top-left
 		1.0, 1.0,     // Top-right
@@ -126,19 +181,20 @@ func main() {
 	
 	
 	//create a program to preprocess the images (apply F inverse then subtract base image)
-	preprocess, err := loadProgram("vertex.glsl", "preprocess.glsl")
+	var err error
+	preprocess, err = loadProgram("vertex.glsl", "preprocess.glsl")
 	if err != nil {
 		log.Fatalf("Failed to load preprocessing program: %v", err)
 	}
 	
 	//create a program to cement the images together (sum their pixel scaled by intensity factors)
-	step, err := loadProgram("vertex.glsl", "cement.glsl")
+	step, err = loadProgram("vertex.glsl", "cement.glsl")
 	if err != nil {
 		log.Fatalf("Failed to load cement program: %v", err)
 	}
 	
 	//create a program to tone map the result by applying F to the cemented image
-	final, err := loadProgram("vertex.glsl", "tonemap.glsl")
+	final, err = loadProgram("vertex.glsl", "tonemap.glsl")
 	if err != nil {
 		log.Fatalf("Failed to load tonemap program: %v", err)
 	}
@@ -175,7 +231,7 @@ func main() {
 	imglocation.Uniform1i(1)
 	checkGLError()	
 	
-	intensitylocation := step.GetUniformLocation("intensity")
+	intensitylocation = step.GetUniformLocation("intensity")
 	checkGLError()
 	
 	final.Use()
@@ -187,103 +243,4 @@ func main() {
 	imglocation = final.GetUniformLocation("img")
 	imglocation.Uniform1i(0)
 	checkGLError()	
-	
-	//create framebuffers to render final outputs	
-	fullSizeFBs := createFramebufferPair(width, height)
-	
-	//create framebuffers to render in real time for the current window
-	windowFBs := createFramebufferPair(windowWidth, windowHeight)
-	
-	//load the textures
-	preprocess.Use()
-	gl.Viewport(0,0, width, height)
-	
-	vectors, err := loadImages(imagePaths, width, height)
-	if err != nil {
-		log.Fatalf("Failed to load images into texture: %v", err)
-	}	
-	
-	//check that the images were loaded correctly
-	
-	checkGLError()
-	
-	screenFB := gl.Framebuffer(0)
-				
-	lastUpdated := time.Now()
-	frames := 0
-	shouldSave := false
-	rawOutput := make([]Pixel, width*height)
-	done := make(chan int, 100)
-	saveOperations := 0
-    for !window.ShouldClose() {
-		frames++
-					
-		err = controller.Update(currIntensity)
-		if err != nil {
-			log.Printf("Failed to update controller state: %v", err)
-			return
-		}
-		for i := range vectors {
-			vectors[i].R = currIntensity[i]
-			vectors[i].G = currIntensity[i]
-			vectors[i].B = currIntensity[i]
-		}
-		
-		
-		//render to the screen
-		step.Use()
-		gl.Viewport(0,0, windowWidth, windowHeight)
-		result := render(vectors, windowFBs, intensitylocation)
-		
-		gl.ActiveTexture(gl.TEXTURE0)
-		result.Bind(gl.TEXTURE_2D)
-		
-		screenFB.Bind()
-		final.Use()
-		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
-		
-		checkGLError()		
-	
-		//save the output if the user wanted to
-		if shouldSave {
-			step.Use()
-			gl.Viewport(0,0, width, height)
-			result := render(vectors, fullSizeFBs, intensitylocation)
-			
-			gl.ActiveTexture(gl.TEXTURE0)
-			result.Bind(gl.TEXTURE_2D)
-		
-			final.Use()
-			gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
-			
-			gl.ReadPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, rawOutput)
-		
-			go func() {
-				path := "output.jpg"
-				err := saveToJPEG(path, width, height, rawOutput)
-				if err != nil {
-					log.Printf("Failed to save jpeg: %v", err)
-				}
-				done <- 1
-			}()
-			saveOperations++
-			shouldSave = false	
-		}
-				
-		glfw.PollEvents()
-		now := time.Now()
-		diff := now.Sub(lastUpdated)
-		if diff > time.Second*2 {
-			fmt.Printf("%.1f FPS\n", float64(frames)/diff.Seconds())
-			lastUpdated = now
-			frames = 0
-		}
-		
-		window.SwapBuffers()
-    }
-	
-	//wait for any remaining saves to complete
-	for i := 0; i < saveOperations; i++ {
-		<-done
-	}	
 }

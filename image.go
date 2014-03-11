@@ -1,4 +1,4 @@
-package main
+package Ecement
 
 import (
 	"image"
@@ -9,6 +9,10 @@ import (
 	"image/jpeg"
     gl "github.com/go-gl/gl"
 )
+
+type Pixel struct {
+	R, G, B, A float32
+}
 
 func getImageRes(filename string) (int, int, error) {
 	file, err := os.Open(filename)
@@ -23,13 +27,6 @@ func getImageRes(filename string) (int, int, error) {
 	}
 	
 	return config.Width, config.Height, nil
-}
-
-
-type lightvector struct {
-	texture gl.Texture
-	R, G, B, A float32
-	filename string
 }
 
 func loadImage(filename string, n *image.NRGBA) error {
@@ -58,7 +55,7 @@ func loadImage(filename string, n *image.NRGBA) error {
 	return nil
 }
 
-func loadImages(filenames []string, width, height int) (vectors []lightvector, err error) {
+func loadImages(p Painting, width, height int, removeBackground bool) (error) {
 
 	//create a temporary texture to load images into
 	tmpTexture := gl.GenTexture()
@@ -74,7 +71,6 @@ func loadImages(filenames []string, width, height int) (vectors []lightvector, e
 	smallBlackTex := gl.GenTexture()
 	defer smallBlackTex.Delete()
 	
-	
 	//image to subtract from is in texture unit 1
 	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
 	smallBlackTex.Bind(gl.TEXTURE_2D)
@@ -85,36 +81,26 @@ func loadImages(filenames []string, width, height int) (vectors []lightvector, e
 	
 	pixel := []uint8{0, 0, 0, 255}
     gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
-	
-	//create a framebuffer to preprocess the images into
-	fb := gl.GenFramebuffer()
-	fb.Bind()
-	defer fb.Delete()
-		
+			
 	pixelBuf := image.NewNRGBA(image.Rectangle{Max: image.Point{X:width, Y:height}})
-	vectors = make([]lightvector, len(filenames))
-	for i, filename := range filenames {
-		err := loadImage(filename, pixelBuf)
+	for i := range p {
+		err := loadImage(p[i].Filename, pixelBuf)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		vectors[i].R = 1.0
-		vectors[i].G = 1.0
-		vectors[i].B = 1.0
-		vectors[i].filename = filename
 		
 		//after we load in the base image, we need to change the image to subract to be it
 		//instead of the 1x1 black texture we used to load in the base image
-		if i == 1 {
+		if i == 1 && removeBackground {
 			gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
-			vectors[0].texture.Bind(gl.TEXTURE_2D)
+			p[0].Texture.Bind(gl.TEXTURE_2D)
 		}
 		
 		//create the actual texture for image (where the preprocessed result goes)
 		//don't overwrite the texture in tex unit 1
 		gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(2))
-		vectors[i].texture = gl.GenTexture()
-		vectors[i].texture.Bind(gl.TEXTURE_2D)
+		p[i].Texture = gl.GenTexture()
+		p[i].Texture.Bind(gl.TEXTURE_2D)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
@@ -122,7 +108,7 @@ func loadImages(filenames []string, width, height int) (vectors []lightvector, e
 		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
 		
 		//bind it as the framebuffer target
-	 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, vectors[i].texture, 0)	
+	 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, p[i].Texture, 0)	
 		
 		//upload the image into the temporary GPU texture
 		gl.ActiveTexture(gl.TEXTURE0)
@@ -133,7 +119,7 @@ func loadImages(filenames []string, width, height int) (vectors []lightvector, e
 		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)		
 	} 
 	
-	return  vectors, nil
+	return nil
 }	
 
 func saveToJPEG(filename string, width, height int, data []Pixel) error {	
