@@ -6,6 +6,10 @@ import (
     gl "github.com/go-gl/gl"
 )
 
+const (
+	internalFormat = gl.RGB32F
+)
+
 type RGB32f struct {
 	R, G, B float32
 }
@@ -55,7 +59,8 @@ func (p Painting)CreateRendering(width, height int) *Rendering {
 	for i := range tex {
 		*(tex[i]) = gl.GenTexture()
 		(*(tex[i])).Bind(gl.TEXTURE_2D)
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB16F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
+		gl.TexImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, gl.RGB, gl.FLOAT, nil)
+		checkGLError()
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
@@ -80,7 +85,11 @@ func (r *Rendering)Update() {
 	FB.Bind()
 	step.Use()
 	vao.Bind()
+	
 	gl.Viewport(0,0, r.Width, r.Height)
+	//  	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.Texture, 0)	
+	// gl.ClearColor(0.0, 0.0, 0.0, 1.0)
+	//     gl.Clear(gl.COLOR_BUFFER_BIT)
 	
 	//update the rendering by adding only the changes of each channel
 	//this speeds things up a lot, as usually only a few channels are 
@@ -97,7 +106,9 @@ func (r *Rendering)Update() {
 			B:r.Painting[i].Intensity.B - r.curr[i].B,
 		} 
 		r.curr[i] = r.Painting[i].Intensity
-				
+		
+		// diff := r.Painting[i].Intensity
+		
 		//update the uniform to use the new intensities
 		intensitylocation.Uniform3f(diff.R, diff.G, diff.B)
 	
