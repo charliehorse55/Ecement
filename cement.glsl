@@ -12,9 +12,7 @@ uniform vec3 intensity;
 void main() {
 	vec4 p = texture(img, texCoord);
 	vec4 q = texture(total, texCoord);
-	outColor.r = p.r*intensity.r + q.r;
-	outColor.g = p.g*intensity.g + q.g;
-	outColor.b = p.b*intensity.b + q.b;
-	outColor.a = 1.0;
+	outColor = p*vec4(intensity, 1.0) + q;
+//	outColor.a = 1.0;
 }
 
