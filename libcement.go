@@ -55,7 +55,7 @@ func (p Painting)CreateRendering(width, height int) *Rendering {
 	for i := range tex {
 		*(tex[i]) = gl.GenTexture()
 		(*(tex[i])).Bind(gl.TEXTURE_2D)
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
+		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB16F, width, height, 0, gl.RGBA, gl.FLOAT, nil)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
