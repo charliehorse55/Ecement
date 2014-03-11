@@ -123,10 +123,13 @@ func (r *Rendering)Update() {
 //NOTE that this function specifically does NOT bind to a framebuffer
 // or set a viewport
 //this lets you bind to the screen before calling this if you want
-//otherwise, just bind to Ecement.FB
-func (r *Rendering)Tonemap() {
+//otherwise, just bind to libcement.FB
+func (r *Rendering)Tonemap() {	
 	vao.Bind()
-	final.Use()
+	tonemap.Use()
+	//the tonemap shader expects the current lightspace to be in tex unit 0
+	gl.ActiveTexture(gl.TEXTURE0)
+	r.Texture.Bind(gl.TEXTURE_2D)
 	gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)	
 }
 
@@ -147,7 +150,7 @@ var vao gl.VertexArray
 //shaders
 var preprocess gl.Program
 var step gl.Program
-var final gl.Program
+var tonemap gl.Program
 
 var intensitylocation gl.UniformLocation
 
@@ -194,7 +197,7 @@ func Start() {
 	}
 	
 	//create a program to tone map the result by applying F to the cemented image
-	final, err = loadProgram("vertex.glsl", "tonemap.glsl")
+	tonemap, err = loadProgram("vertex.glsl", "tonemap.glsl")
 	if err != nil {
 		log.Fatalf("Failed to load tonemap program: %v", err)
 	}
@@ -234,13 +237,13 @@ func Start() {
 	intensitylocation = step.GetUniformLocation("intensity")
 	checkGLError()
 	
-	final.Use()
-	posLocation = final.GetAttribLocation("position")
+	tonemap.Use()
+	posLocation = tonemap.GetAttribLocation("position")
 	posLocation.AttribPointer(2, gl.FLOAT, false, 0, nil)
 	posLocation.EnableArray()
 	checkGLError()	
 	
-	imglocation = final.GetUniformLocation("img")
+	imglocation = tonemap.GetUniformLocation("img")
 	imglocation.Uniform1i(0)
 	checkGLError()	
 }
