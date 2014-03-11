@@ -1,4 +1,4 @@
-package Ecement
+package libcement
 
 import (
 	"io/ioutil"
