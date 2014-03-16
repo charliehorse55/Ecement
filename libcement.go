@@ -3,6 +3,7 @@ package libcement
 import (
 	"fmt"
 	"log"
+	"math"
     gl "github.com/go-gl/gl"
 )
 
@@ -14,23 +15,54 @@ type RGB32f struct {
 	R, G, B float32
 }
 
-type Lightvector struct {
-	Texture gl.Texture
-	Intensity RGB32f
-	Filename string
+type Painting struct {
+	Background gl.Texture
+	Vectors gl.Texture
+	ResponseF []float32
 }
 
-type Painting []Lightvector
-
 type Rendering struct {
-	Painting Painting
+	Painting *Painting
 	curr []RGB32f
-	Texture gl.Texture
+	FrontBuffer gl.Texture
 	BackBuffer gl.Texture
 	Width, Height int
 }
 
-func (p Painting)Load(removeBackground bool) error {
+// n^2 algorthim for now
+// n will most likely never be higher than ~16k anyways
+func inverseF(F []float32, Ceiling float32) []float32 {
+	out := make([]float32, len(F))
+	Ceiling = math.Sqrt(Ceiling)
+	for i := range F {
+		minErr := 0.0
+		minErrVal := 0.0
+		target := float64(i)/float64(len(F)) * float64(Ceiling)
+		for j := range F {
+			
+		}
+		out[i] = minErrVal
+	}
+	
+}
+
+
+func createSqrtF(size uint) []float32 {
+	result := make([]float32, size)
+	for i := 0; i < size; i++ {
+		result[i] = math.Sqrt(float64(i)/float64(size-1))
+	}
+}
+
+func NewPainting(ResponseF []float32) *Painting {
+	p := &Painting{ResponseF:ResponseF}
+	if p.ResponseF == nil {
+		p.ResponseF = createSqrtF(4096)
+	}
+	return p
+}
+
+func (p *Painting)Load(removeBackground bool) error {
 	FB.Bind()
 	vao.Bind()
 	preprocess.Use()
@@ -48,14 +80,14 @@ func (p Painting)Load(removeBackground bool) error {
 	return loadImages(p, width, height, removeBackground)
 }
 
-func (p Painting)CreateRendering(width, height int) *Rendering {
+func (p *Painting)CreateRendering(width, height int) *Rendering {
 	var result Rendering
 	result.Painting = p
 	result.curr = make([]RGB32f, len(p))
 	result.Width = width
 	result.Height = height
 	
-	tex := []*gl.Texture{&result.Texture, &result.BackBuffer}
+	tex := []*gl.Texture{&result.FrontBuffer, &result.BackBuffer}
 	for i := range tex {
 		*(tex[i]) = gl.GenTexture()
 		(*(tex[i])).Bind(gl.TEXTURE_2D)
@@ -106,19 +138,17 @@ func (r *Rendering)Update() {
 			B:r.Painting[i].Intensity.B - r.curr[i].B,
 		} 
 		r.curr[i] = r.Painting[i].Intensity
-		
-		// diff := r.Painting[i].Intensity
-		
+				
 		//update the uniform to use the new intensities
 		intensitylocation.Uniform3f(diff.R, diff.G, diff.B)
 	
 		//bind the current result framebuffer to texture 0
 		gl.ActiveTexture(gl.TEXTURE0)
-		r.Texture.Bind(gl.TEXTURE_2D)
+		r.FrontBuffer.Bind(gl.TEXTURE_2D)
 	
 		//bind the input image to texture 1
 		gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
-		r.Painting[i].Texture.Bind(gl.TEXTURE_2D)
+		r.Painting.Vectors[i].Texture.Bind(gl.TEXTURE_2D)
 	
 		//draw to the output buffer
 	 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.BackBuffer, 0)
@@ -135,7 +165,7 @@ func (r *Rendering)Update() {
 // or set a viewport
 //this lets you bind to the screen before calling this if you want
 //otherwise, just bind to libcement.FB
-func (r *Rendering)Tonemap() {	
+func (r *Rendering)Tonemap(ceiling float32) {	
 	vao.Bind()
 	tonemap.Use()
 	//the tonemap shader expects the current lightspace to be in tex unit 0
