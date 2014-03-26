@@ -1,9 +1,9 @@
 package libcement
 
 import (
-	"fmt"
 	"log"
-	"math"
+	"os"
+	"fmt"
     gl "github.com/go-gl/gl"
 )
 
@@ -16,9 +16,14 @@ type RGB32f struct {
 }
 
 type Painting struct {
-	Background gl.Texture
-	Vectors gl.Texture
-	ResponseF []float32
+	background gl.Texture
+	vectors []gl.Texture
+	F []float32
+	Finverse []float32
+	lutF gl.Texture
+	lutFinverse gl.Texture
+	Width int
+	Height int
 }
 
 type Rendering struct {
@@ -29,61 +34,70 @@ type Rendering struct {
 	Width, Height int
 }
 
-// n^2 algorthim for now
-// n will most likely never be higher than ~16k anyways
-func inverseF(F []float32, Ceiling float32) []float32 {
-	out := make([]float32, len(F))
-	Ceiling = math.Sqrt(Ceiling)
-	for i := range F {
-		minErr := 0.0
-		minErrVal := 0.0
-		target := float64(i)/float64(len(F)) * float64(Ceiling)
-		for j := range F {
-			
-		}
-		out[i] = minErrVal
+func saveFunction(path string, data []float32) {
+	file, err := os.Create(path)
+	if err != nil {
+		log.Printf("Failed to open file %s for output\n", path)
+		return
+	}
+	for i,val := range data {
+		fmt.Fprintf(file, "%3d, %5.3f\n", i, val)
+	}
+}
+
+func NewPainting(width, height int, Finverse []float32, background gl.Texture) *Painting {
+	p := &Painting{Finverse:Finverse, Width:width, Height:height}
+	if len(p.Finverse) == 0 {
+		p.Finverse = createSquaredFinverse(256)
 	}
 	
-}
-
-
-func createSqrtF(size uint) []float32 {
-	result := make([]float32, size)
-	for i := 0; i < size; i++ {
-		result[i] = math.Sqrt(float64(i)/float64(size-1))
-	}
-}
-
-func NewPainting(ResponseF []float32) *Painting {
-	p := &Painting{ResponseF:ResponseF}
-	if p.ResponseF == nil {
-		p.ResponseF = createSqrtF(4096)
-	}
+	p.F = FinverseToF(p.Finverse)
+	
+	//create the LUTs
+	saveFunction("F.txt", p.F)
+	saveFunction("Finverse.txt", p.Finverse)
+	p.lutF = createLookupTable(p.F)	
+	p.lutFinverse = createLookupTable(p.Finverse)
+	
+	//create a 1x1 black texture to preprocess the background image with
+	//this way we won't subtract anything from the background image
+	smallBlackTex := gl.GenTexture()
+	defer smallBlackTex.Delete()
+	
+	smallBlackTex.Bind(gl.TEXTURE_2D)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	pixel := []uint8{0, 0, 0, 255}
+    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+	
+	//load the background
+	p.background = loadTexture(width, height, background, smallBlackTex, p.lutFinverse)
+		
 	return p
 }
 
-func (p *Painting)Load(removeBackground bool) error {
-	FB.Bind()
-	vao.Bind()
-	preprocess.Use()
-	if len(p) == 0 {
-		return fmt.Errorf("Empty painting")
-	}
-	
-	width, height, err := getImageRes(p[0].Filename)
-	if err != nil {
-		return err
-	}
-	gl.Viewport(0,0, width, height)
-	
-	
-	return loadImages(p, width, height, removeBackground)
+func (p *Painting)AddLightvector(newVector gl.Texture) {
+	newTexture := loadTexture(p.Width, p.Height, newVector, p.background, p.lutFinverse)
+	p.vectors = append(p.vectors, newTexture)
 }
 
-func (p *Painting)CreateRendering(width, height int) *Rendering {
+func createLookupTable(data []float32) gl.Texture {
+	tex := gl.GenTexture()
+	tex.Bind(gl.TEXTURE_1D)
+	gl.TexParameteri(gl.TEXTURE_1D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_BORDER)
+	gl.TexParameteri(gl.TEXTURE_1D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_BORDER)
+	gl.TexParameteri(gl.TEXTURE_1D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_1D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.TexImage1D(gl.TEXTURE_1D, 0, gl.RED, len(data), 0, gl.RED, gl.FLOAT, data)	
+	return tex
+}
+
+func (p *Painting)CreateRendering(width, height int, initial []RGB32f) *Rendering {
 	var result Rendering
 	result.Painting = p
-	result.curr = make([]RGB32f, len(p))
+	result.curr = make([]RGB32f, len(p.vectors))
 	result.Width = width
 	result.Height = height
 	
@@ -92,7 +106,6 @@ func (p *Painting)CreateRendering(width, height int) *Rendering {
 		*(tex[i]) = gl.GenTexture()
 		(*(tex[i])).Bind(gl.TEXTURE_2D)
 		gl.TexImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, gl.RGB, gl.FLOAT, nil)
-		checkGLError()
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
@@ -103,61 +116,103 @@ func (p *Painting)CreateRendering(width, height int) *Rendering {
 	FB.Bind()
 	vao.Bind()
 	gl.Viewport(0,0, width, height)
- 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, result.Texture, 0)	
+ 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, result.FrontBuffer, 0)	
 	gl.ClearColor(0.0, 0.0, 0.0, 1.0)
     gl.Clear(gl.COLOR_BUFFER_BIT)
 	
+	//add the background
+	step.Use()
+	result.cementVector(result.Painting.background, 1.0, 1.0, 1.0)
+	
 	//this will render everything, as result.curr has been init to 0
 	//thus the current state is that the texture contains only black
-	result.Update()
+	result.Update(initial)
 	return &result
 }
 
-func (r *Rendering)Update() {
+func (r *Rendering)cementVector(tex gl.Texture, R, G, B float32) {
+	
+	//update the uniform to use the new intensities
+	intensitylocation.Uniform3f(R, G, B)
+
+	//bind the current result framebuffer to texture 0
+	gl.ActiveTexture(gl.TEXTURE0)
+	r.FrontBuffer.Bind(gl.TEXTURE_2D)
+
+	//bind the input image to texture 1
+	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
+	tex.Bind(gl.TEXTURE_2D)
+
+	//draw to the output buffer
+ 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.BackBuffer, 0)
+	gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+	
+	//swap the buffers
+	tmp := r.BackBuffer
+	r.BackBuffer = r.FrontBuffer
+	r.FrontBuffer = tmp
+}
+
+func loadTexture(width, height int, source, background, Finverse gl.Texture) gl.Texture {	
+	FB.Bind()
+	vao.Bind()
+	preprocess.Use()
+	gl.Viewport(0,0, width, height)
+			
+	//create the actual texture for image (where the preprocessed result goes)
+	result := gl.GenTexture()
+	result.Bind(gl.TEXTURE_2D)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)	
+	
+	//bind it as the framebuffer target
+ 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, result, 0)	
+	
+	//source is in tex unit 0
+	gl.ActiveTexture(gl.TEXTURE0)
+	source.Bind(gl.TEXTURE_2D)
+	
+	//background is in texture unit 1
+	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
+	background.Bind(gl.TEXTURE_2D)
+				
+	//lut for Finverse is in texture unit 3
+	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(3))
+	Finverse.Bind(gl.TEXTURE_1D)
+								
+	//preprocess the image
+	gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)		
+	
+	return result
+}	
+
+func (r *Rendering)Update(newIntensity []RGB32f) {
 	FB.Bind()
 	step.Use()
 	vao.Bind()
 	
 	gl.Viewport(0,0, r.Width, r.Height)
-	//  	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.Texture, 0)	
-	// gl.ClearColor(0.0, 0.0, 0.0, 1.0)
-	//     gl.Clear(gl.COLOR_BUFFER_BIT)
 	
 	//update the rendering by adding only the changes of each channel
 	//this speeds things up a lot, as usually only a few channels are 
 	//changed per frame
-	for i := range r.Painting {
+	for i := range r.curr {
 		//does not need to be updated
-		if r.Painting[i].Intensity == r.curr[i] {
+		if newIntensity[i] == r.curr[i] {
 			continue
 		}
 		
 		diff := RGB32f {
-			R:r.Painting[i].Intensity.R - r.curr[i].R,
-			G:r.Painting[i].Intensity.G - r.curr[i].G,
-			B:r.Painting[i].Intensity.B - r.curr[i].B,
+			R:newIntensity[i].R - r.curr[i].R,
+			G:newIntensity[i].G - r.curr[i].G,
+			B:newIntensity[i].B - r.curr[i].B,
 		} 
-		r.curr[i] = r.Painting[i].Intensity
-				
-		//update the uniform to use the new intensities
-		intensitylocation.Uniform3f(diff.R, diff.G, diff.B)
-	
-		//bind the current result framebuffer to texture 0
-		gl.ActiveTexture(gl.TEXTURE0)
-		r.FrontBuffer.Bind(gl.TEXTURE_2D)
-	
-		//bind the input image to texture 1
-		gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(1))
-		r.Painting.Vectors[i].Texture.Bind(gl.TEXTURE_2D)
-	
-		//draw to the output buffer
-	 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.BackBuffer, 0)
-		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)
+		r.curr[i] = newIntensity[i]
 		
-		//swap the buffers
-		tmp := r.BackBuffer
-		r.BackBuffer = r.Texture
-		r.Texture = tmp
+		r.cementVector(r.Painting.vectors[i], diff.R, diff.G, diff.B)
 	}
 }
 
@@ -165,12 +220,18 @@ func (r *Rendering)Update() {
 // or set a viewport
 //this lets you bind to the screen before calling this if you want
 //otherwise, just bind to libcement.FB
-func (r *Rendering)Tonemap(ceiling float32) {	
+func (r *Rendering)Tonemap() {	
 	vao.Bind()
 	tonemap.Use()
+	
 	//the tonemap shader expects the current lightspace to be in tex unit 0
 	gl.ActiveTexture(gl.TEXTURE0)
-	r.Texture.Bind(gl.TEXTURE_2D)
+	r.FrontBuffer.Bind(gl.TEXTURE_2D)
+	
+	//the lut for F() needs to be in tex unit 3
+	gl.ActiveTexture(gl.TEXTURE0 + gl.GLenum(3))
+	r.Painting.lutF.Bind(gl.TEXTURE_1D)
+	
 	gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, nil)	
 }
 
@@ -260,6 +321,10 @@ func Start() {
 	newlocation := preprocess.GetUniformLocation("base")
 	newlocation.Uniform1i(1)
 	checkGLError()	
+	
+	Finverselocation := preprocess.GetUniformLocation("Finverse")
+	Finverselocation.Uniform1i(3)
+	checkGLError()	
 		
 	step.Use()
 	posLocation = step.GetAttribLocation("position")
@@ -287,4 +352,9 @@ func Start() {
 	imglocation = tonemap.GetUniformLocation("img")
 	imglocation.Uniform1i(0)
 	checkGLError()	
+	
+	Flocation := tonemap.GetUniformLocation("F")
+	Flocation.Uniform1i(3)
+	checkGLError()	
+	
 }
