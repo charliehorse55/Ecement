@@ -1,6 +1,8 @@
 package libcement
 
 import (
+	"os"
+	"fmt"
 	"math"
 )
 
@@ -54,3 +56,15 @@ func createSquaredFinverse(size int) []float32 {
 	}
 	return result
 }
+
+func saveFunction(path string, data []float32) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	for i,val := range data {
+		fmt.Fprintf(file, "%3d, %5.3f\n", i, val)
+	}
+	return nil
+}
+

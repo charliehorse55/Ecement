@@ -2,7 +2,6 @@ package libcement
 
 import (
 	"log"
-	"os"
 	"fmt"
     gl "github.com/go-gl/gl"
 )
@@ -34,17 +33,6 @@ type Rendering struct {
 	Width, Height int
 }
 
-func saveFunction(path string, data []float32) {
-	file, err := os.Create(path)
-	if err != nil {
-		log.Printf("Failed to open file %s for output\n", path)
-		return
-	}
-	for i,val := range data {
-		fmt.Fprintf(file, "%3d, %5.3f\n", i, val)
-	}
-}
-
 func NewPainting(width, height int, Finverse []float32, background gl.Texture) *Painting {
 	p := &Painting{Finverse:Finverse, Width:width, Height:height}
 	if len(p.Finverse) == 0 {
@@ -54,8 +42,6 @@ func NewPainting(width, height int, Finverse []float32, background gl.Texture) *
 	p.F = FinverseToF(p.Finverse)
 	
 	//create the LUTs
-	saveFunction("F.txt", p.F)
-	saveFunction("Finverse.txt", p.Finverse)
 	p.lutF = createLookupTable(p.F)	
 	p.lutFinverse = createLookupTable(p.Finverse)
 	
@@ -256,13 +242,16 @@ var tonemap gl.Program
 
 var intensitylocation gl.UniformLocation
 
-func Start() {
+func Start() error {
+	
+	err := ShaderInit() 
+	if err != nil {
+		return err
+	}
 	
 	FB = gl.GenFramebuffer()
 	FB.Bind()
-	
-	loadedShaders = make(map[string]gl.Shader)
-		
+			
 	//just drawing a rectangle
 	vao = gl.GenVertexArray()
 	vao.Bind()
@@ -285,23 +274,23 @@ func Start() {
 	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, 4*len(elements), elements, gl.STATIC_DRAW)
 	
 	
+	
 	//create a program to preprocess the images (apply F inverse then subtract base image)
-	var err error
 	preprocess, err = loadProgram("vertex.glsl", "preprocess.glsl")
 	if err != nil {
-		log.Fatalf("Failed to load preprocessing program: %v", err)
+		return fmt.Errorf("Failed to load preprocessing program: %v", err)
 	}
 	
 	//create a program to cement the images together (sum their pixel scaled by intensity factors)
 	step, err = loadProgram("vertex.glsl", "cement.glsl")
 	if err != nil {
-		log.Fatalf("Failed to load cement program: %v", err)
+		return fmt.Errorf("Failed to load cement program: %v", err)
 	}
 	
 	//create a program to tone map the result by applying F to the cemented image
 	tonemap, err = loadProgram("vertex.glsl", "tonemap.glsl")
 	if err != nil {
-		log.Fatalf("Failed to load tonemap program: %v", err)
+		return fmt.Errorf("Failed to load tonemap program: %v", err)
 	}
 	
 	//set up the shader programs
@@ -357,4 +346,5 @@ func Start() {
 	Flocation.Uniform1i(3)
 	checkGLError()	
 	
+	return nil
 }
